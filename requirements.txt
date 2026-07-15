@@ -1,0 +1,6 @@
+# Raw agent (agent_raw.py + tools.py) needs only this:
+anthropic>=0.80
+
+# LangGraph comparison (agent_langgraph.py) additionally needs:
+langgraph>=0.4
+langchain-anthropic>=0.3
