@@ -97,7 +97,7 @@ def run_agent(user_input: str) -> str:
     # Print the full trace so the runs are comparable with agent_raw.py.
     for message in state["messages"]:
         message.pretty_print()
-    return state["messages"][-1].text()
+    return state["messages"][-1].text
 
 
 if __name__ == "__main__":

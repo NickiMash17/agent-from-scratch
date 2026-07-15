@@ -1,5 +1,6 @@
-# Raw agent (agent_raw.py + tools.py) needs only this:
+# Raw agent (agent_raw.py + tools.py) needs only these:
 anthropic>=0.80
+python-dotenv>=1.0   # loads ANTHROPIC_API_KEY from a local .env file
 
 # LangGraph comparison (agent_langgraph.py) additionally needs:
 langgraph>=0.4

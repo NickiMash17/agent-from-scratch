@@ -14,8 +14,11 @@ import json
 import sys
 
 import anthropic
+from dotenv import load_dotenv
 
 from tools import run_tool, tool_schemas
+
+load_dotenv()  # reads ANTHROPIC_API_KEY from a local .env file, if present
 
 MODEL = "claude-opus-4-8"
 

@@ -10,6 +10,7 @@ This is a learning/portfolio piece, not production code.
 tools.py            # 3 example tools + a ~20-line tool registry (shared by both agents)
 agent_raw.py        # the ReAct loop, hand-rolled: one while loop, no dependencies beyond the SDK
 agent_langgraph.py  # the identical agent expressed as a LangGraph graph
+agent_class.py      # the LangGraph agent wrapped in a reusable class, with self-correction
 ```
 
 ## What a ReAct loop actually is
@@ -85,6 +86,47 @@ LangGraph even ships the entire file as one call —
 `create_react_agent(llm, tools)` — which is precisely why it's worth having
 built it by hand once: that one-liner is this repo's `agent_raw.py`, boxed up.
 
+## Wrapping it in a class (`agent_class.py`)
+
+`agent_langgraph.py` builds its graph at module import and runs as a script.
+`agent_class.py` packages the same graph inside an `Agent` class — the shape
+you'd embed in a real application: the graph is compiled **once** in
+`__init__`, and the model, tools, and system prompt are injected, so one
+codebase can construct many differently-configured agents and call
+`agent.run(...)` repeatedly.
+
+The class has three methods, which are just the ReAct steps with names on:
+
+| Method | ReAct step | Raw-loop equivalent (`agent_raw.py`) |
+|---|---|---|
+| `call_llm` (the `llm` node) | REASON | `client.messages.create(...)` |
+| `exists_action` (conditional edge) | decide | `if stop_reason != "tool_use": break` |
+| `take_action` (the `action` node) | ACT + OBSERVE | the `for block ... run_tool(...)` loop |
+
+The tools are bound straight from the registry in `tools.py` — the same
+schema dicts the raw agent sends — so the registry stays the single source
+of truth across all three implementations.
+
+### Self-correction on hallucinated tool names
+
+Models occasionally invent a tool name that doesn't exist (calling
+`calculate` when the tool is `calculator`). A naive dispatch crashes with a
+`KeyError`. Instead, `take_action` checks the registry first and returns the
+string `"bad tool name, retry"` as the tool result. To the model that's just
+another observation, so on the next REASON step it corrects itself:
+
+```
+[act]     calculate({'expression': '1234 * 5678'})   <- hallucinated name
+[observe] bad tool name, retry
+[act]     calculator({'expression': '1234 * 5678'})  <- model retries, correctly
+[observe] 7006652
+```
+
+This is the same principle the raw loop applies to tool *exceptions* (feed
+errors back as observations, don't crash), applied one level earlier — to
+the dispatch itself. A useful general rule: inside an agent loop, almost
+every failure is more valuable as an observation than as an exception.
+
 ## Why learn the raw loop before reaching for a framework?
 
 - **Debugging.** When an agent loops forever, ignores a tool, or "forgets"
@@ -111,6 +153,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # Windows: $env:ANTHROPIC_API_KEY = "sk-an
 
 python agent_raw.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_langgraph.py "What is (17 + 3) ** 2 divided by 8?"
+python agent_class.py "What is (17 + 3) ** 2 divided by 8?"
 ```
 
 Both print their full trace (reasoning, tool calls, observations) so you can
