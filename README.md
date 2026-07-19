@@ -7,10 +7,11 @@ is to see exactly what a framework does for you by first doing it yourself.
 This is a learning/portfolio piece, not production code.
 
 ```
-tools.py            # 3 example tools + a ~20-line tool registry (shared by both agents)
+tools.py            # 4 example tools + a ~20-line tool registry (shared by all agents)
 agent_raw.py        # the ReAct loop, hand-rolled: one while loop, no dependencies beyond the SDK
 agent_langgraph.py  # the identical agent expressed as a LangGraph graph
 agent_class.py      # the LangGraph agent wrapped in a reusable class, with self-correction
+agent_persistence.py # thread-based conversation memory (checkpointer) + token streaming
 search_comparison.py # raw web scraping vs. an agentic search API, side by side
 ```
 
@@ -128,6 +129,59 @@ errors back as observations, don't crash), applied one level earlier — to
 the dispatch itself. A useful general rule: inside an agent loop, almost
 every failure is more valuable as an observation than as an exception.
 
+## Persistence and streaming (`agent_persistence.py`)
+
+Every agent above forgets everything when the process exits — and even
+within a process, each `run()` starts a fresh conversation. That's the
+statelessness of the API showing through: *something* has to store the
+message history, and so far it's been a Python list.
+
+A LangGraph **checkpointer** moves that storage into a database. Pass one to
+`graph.compile(checkpointer=...)` (the `Agent` class now takes it as a
+constructor arg) and the graph saves its state after every node, keyed by a
+`thread_id` you pass at invoke time. This buys you, with zero changes to the
+agent logic:
+
+- **Multi-turn conversations** — same `thread_id` = the conversation
+  continues where it left off. Follow-ups like "what about in LA?" just work.
+- **Resuming after interruption** — with a file- or server-backed database
+  (swap `:memory:` for a path), a crash or restart loses nothing; invoke the
+  same `thread_id` and the agent picks up mid-conversation.
+- **Many users, one agent** — every user gets their own `thread_id`; one
+  compiled graph serves them all without their histories bleeding together.
+
+The demo makes the memory boundary visible. Real trace, same question asked
+on two threads:
+
+```
+=== thread 1 | user: What's the weather in SF?
+[act]     get_weather({'city': 'San Francisco'})
+[answer]  ...62°F and foggy...
+
+=== thread 1 | user: What about in LA?          <- "in LA" only makes sense with turn 1
+[act]     get_weather({'city': 'Los Angeles'})
+[answer]  ...78°F and sunny — a good bit warmer and clearer than SF...
+
+=== thread 1 | user: Which one is warmer?       <- answered from memory, NO tool calls
+[answer]  Los Angeles is warmer — 78°F versus 62°F in San Francisco...
+
+=== thread 2 | user: Which one is warmer?       <- fresh thread, no context
+[answer]  I'd be happy to help you compare temperatures! However, I need a
+          bit more information first. Which cities would you like me to compare?
+```
+
+Thread 1's third turn is the telling one: the agent compares both cities
+*without calling any tool*, because both answers are already in its restored
+history. Thread 2 gets the identical question and can only ask for
+clarification — the checkpointer's memory is the only difference.
+
+**Streaming** is the second half of the file: `graph.astream_events()`
+surfaces every internal event during a run, including `on_chat_model_stream`
+— one event per token as the model generates it. Print those as they arrive
+and the user watches the answer being written (and sees tool calls happen
+mid-stream) instead of staring at a spinner. For anything user-facing,
+streaming is the difference between "feels broken" and "feels alive".
+
 ## Raw search vs. agentic search (`search_comparison.py`)
 
 The `web_search` tool in `tools.py` is a stub. What should the real thing
@@ -223,6 +277,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # Windows: $env:ANTHROPIC_API_KEY = "sk-an
 python agent_raw.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_langgraph.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_class.py "What is (17 + 3) ** 2 divided by 8?"
+python agent_persistence.py
 ```
 
 Both print their full trace (reasoning, tool calls, observations) so you can

@@ -6,6 +6,10 @@ python-dotenv>=1.0   # loads ANTHROPIC_API_KEY from a local .env file
 langgraph>=0.4
 langchain-anthropic>=0.3
 
+# Persistence demo (agent_persistence.py):
+langgraph-checkpoint-sqlite>=2.0   # SqliteSaver / AsyncSqliteSaver
+aiosqlite>=0.20                    # async backend for AsyncSqliteSaver
+
 # Raw vs agentic search demo (search_comparison.py):
 tavily-python>=0.5
 ddgs>=9.0            # the renamed successor of the deprecated duckduckgo-search package

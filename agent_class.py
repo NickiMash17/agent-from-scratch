@@ -47,7 +47,9 @@ class AgentState(TypedDict):
 
 
 class Agent:
-    def __init__(self, model, tool_schemas: list[dict], system: str = ""):
+    def __init__(
+        self, model, tool_schemas: list[dict], system: str = "", checkpointer=None
+    ):
         self.system = system
         # Bind the same Anthropic-format schemas that tools.py already
         # defines — the registry stays the single source of truth.
@@ -62,7 +64,9 @@ class Agent:
         )
         graph.add_edge("action", "llm")
         graph.set_entry_point("llm")
-        self.graph = graph.compile()
+        # With a checkpointer, the graph saves its state (the message list)
+        # after every node, keyed by thread_id — see agent_persistence.py.
+        self.graph = graph.compile(checkpointer=checkpointer)
 
     def exists_action(self, state: AgentState) -> bool:
         """Did the model's last message request any tool calls?"""
@@ -97,8 +101,11 @@ class Agent:
             )
         return {"messages": results}
 
-    def run(self, user_input: str) -> str:
-        state = self.graph.invoke({"messages": [("user", user_input)]})
+    def run(self, user_input: str, thread_id: str | None = None) -> str:
+        # thread_id only has an effect when the Agent was built with a
+        # checkpointer: same thread_id -> the saved conversation continues.
+        config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+        state = self.graph.invoke({"messages": [("user", user_input)]}, config)
         return state["messages"][-1].text
 
 

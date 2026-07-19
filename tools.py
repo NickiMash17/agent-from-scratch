@@ -124,7 +124,38 @@ def web_search(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: current time
+# Tool 3: weather (stub)
+# ---------------------------------------------------------------------------
+
+@register_tool(
+    name="get_weather",
+    description="Get the current weather for a city.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "city": {
+                "type": "string",
+                "description": "City name, e.g. 'San Francisco'",
+            }
+        },
+        "required": ["city"],
+    },
+)
+def get_weather(city: str) -> str:
+    # Stub with canned values so demos (agent_persistence.py) are
+    # deterministic. Swap in a real weather API to make it live.
+    canned = {
+        "san francisco": "62F, foggy",
+        "sf": "62F, foggy",
+        "los angeles": "78F, sunny",
+        "la": "78F, sunny",
+    }
+    report = canned.get(city.strip().lower(), "70F, partly cloudy")
+    return f"Weather in {city}: {report}"
+
+
+# ---------------------------------------------------------------------------
+# Tool 4: current time
 # ---------------------------------------------------------------------------
 
 @register_tool(
