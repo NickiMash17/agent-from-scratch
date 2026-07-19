@@ -13,6 +13,7 @@ agent_langgraph.py  # the identical agent expressed as a LangGraph graph
 agent_class.py      # the LangGraph agent wrapped in a reusable class, with self-correction
 agent_persistence.py # thread-based conversation memory (checkpointer) + token streaming
 agent_human_in_loop.py # approval gates, editing pending actions, time travel
+agent_essay_writer.py # a different architecture: specialized nodes in a revision cycle
 search_comparison.py # raw web scraping vs. an agentic search API, side by side
 ```
 
@@ -271,6 +272,77 @@ the graph between checkpoints, `update_state` writes a new checkpoint with
 edited values, and time travel is just resuming from a non-tip checkpoint,
 which forks the chain like a git branch.
 
+## A different architecture: the essay writer (`agent_essay_writer.py`)
+
+Every agent above is the same shape: **one generalist LLM node** in a loop,
+picking tools until it's done. The model decides the control flow at every
+step. The essay writer inverts that: **five specialized nodes**, each with
+its own focused prompt and one job, wired into a control flow that is fixed
+in the graph:
+
+```
+planner -> research_plan -> generate --(revisions left?)--> reflect
+                                |                              |
+                               END <---- generate <- research_critique
+```
+
+- `planner` writes an outline; `research_plan` turns the task into search
+  queries (structured output via a Pydantic `Queries` model) and gathers
+  Tavily snippets; `generate` writes the essay; `reflect` critiques it like
+  a strict teacher; `research_critique` researches *answers to the critique*
+  and loops back to `generate`.
+- The model never chooses what happens next — the only branch is
+  `revision_number > max_revisions`, a bound set in state, not vibes. An
+  agent that "improves until it's good" is an agent that might never stop;
+  this one revises exactly as many times as you budgeted.
+- Research happens **twice, differently**: once from the task (before
+  drafting) and once from the critique (targeted at the identified gaps).
+
+### Why specialized nodes for long-form work?
+
+A single prompt asking one model call to "plan, research, write, and
+self-edit an essay" does all four jobs mediocrely — and a ReAct loop doesn't
+fix that, because the bottleneck isn't tool access, it's that one prompt
+can't be four different specialists at once. Splitting the roles gives each
+step a clean prompt and a single concern, and it turns the workflow itself
+into inspectable structure: you can see (and log, and interrupt) exactly
+where a bad essay went wrong — weak plan, thin research, or lazy revision.
+This is also where LangGraph clearly earns its keep over the raw loop from
+`agent_raw.py`: a while loop expresses "call tools until done" neatly, but a
+five-role cycle with a bounded revision loop is genuinely clearer as a graph.
+
+### Trace from a live run
+
+Task: *"Write an essay on whether AI agents should be built from scratch or
+with frameworks"* (a topic this repo has opinions about), `max_revisions=2`:
+
+```
+NODE: planner            outline: hook, case-for, case-against, trade-offs,
+                         decision framework, conclusion; "aim for 1,200-1,600 words"
+NODE: research_plan      query: 'AI agent frameworks vs building from scratch comparison...'
+                         query: 'popular AI agent frameworks LangChain AutoGen CrewAI...'
+                         (6 snippets gathered)
+NODE: generate           draft revision 1 — 1,127 words
+NODE: reflect            "Provisional grade: A-/B+ ... rests on ONE concrete example ...
+                         name the 'stripped-out framework' case ... balance Section II
+                         with a framework success story ... engage a real counterargument"
+NODE: research_critique  query: 'LangGraph checkpointing state persistence ... hard to
+                         reproduce from scratch'   <- queries now target the CRITIQUE
+                         (12 snippets total)
+NODE: generate           draft revision 2 — 1,813 words
+```
+
+The revision visibly incorporated the critique: it added a framework success
+story naming production users of LangGraph's checkpointing, a concrete
+"forty lines of code" from-scratch illustration, a named breaking-change
+migration as evidence for framework churn, and a new section confronting
+the strongest objection to its own thesis. That's the pattern working:
+critique → targeted research → revision, each step done by a node that only
+does that.
+
+(If `TAVILY_API_KEY` isn't set, both research nodes skip with a message and
+the essay is written from model knowledge alone — the graph still runs.)
+
 ## Raw search vs. agentic search (`search_comparison.py`)
 
 The `web_search` tool in `tools.py` is a stub. What should the real thing
@@ -368,6 +440,7 @@ python agent_langgraph.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_class.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_persistence.py
 python agent_human_in_loop.py
+python agent_essay_writer.py
 ```
 
 Both print their full trace (reasoning, tool calls, observations) so you can
