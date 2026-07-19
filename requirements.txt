@@ -5,3 +5,9 @@ python-dotenv>=1.0   # loads ANTHROPIC_API_KEY from a local .env file
 # LangGraph comparison (agent_langgraph.py) additionally needs:
 langgraph>=0.4
 langchain-anthropic>=0.3
+
+# Raw vs agentic search demo (search_comparison.py):
+tavily-python>=0.5
+ddgs>=9.0            # the renamed successor of the deprecated duckduckgo-search package
+beautifulsoup4>=4.12
+requests>=2.31

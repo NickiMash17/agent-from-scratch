@@ -11,6 +11,7 @@ tools.py            # 3 example tools + a ~20-line tool registry (shared by both
 agent_raw.py        # the ReAct loop, hand-rolled: one while loop, no dependencies beyond the SDK
 agent_langgraph.py  # the identical agent expressed as a LangGraph graph
 agent_class.py      # the LangGraph agent wrapped in a reusable class, with self-correction
+search_comparison.py # raw web scraping vs. an agentic search API, side by side
 ```
 
 ## What a ReAct loop actually is
@@ -127,6 +128,74 @@ errors back as observations, don't crash), applied one level earlier — to
 the dispatch itself. A useful general rule: inside an agent loop, almost
 every failure is more valuable as an observation than as an exception.
 
+## Raw search vs. agentic search (`search_comparison.py`)
+
+The `web_search` tool in `tools.py` is a stub. What should the real thing
+look like? The tempting answer — "just scrape the web" — turns out to be the
+wrong tool for an agent, and `search_comparison.py` shows why by answering
+the same query both ways.
+
+**Part 1 (raw):** search DuckDuckGo, `requests.get` the top hit, strip the
+HTML with BeautifulSoup, clean up with regex. Real output for
+*"What is the ReAct pattern for LLM agents?"*:
+
+```
+fetched HTML: 181,742 chars
+scraped text: 13,564 chars (after cleanup!)
+
+ReAct Prompting | Prompt Engineering Guide<!-- --> 🚀 Learn to build apps
+with Claude Code! Use PROMPTING for 20% off Enroll now → Prompt Engineering
+Guide 🎓 Courses About About GitHub GitHub (opens in a new tab) Discord
+Discord (opens in a new tab) ✨ Services Prompt Engineering Introduction LLM
+Settings Basics of Prompting Prompt Elements ...
+```
+
+The answer is in there somewhere — buried in 13k+ characters of nav menus,
+promo banners, and sidebar links.
+
+**Part 2 (agentic):** the same query through Tavily with
+`include_answer=True`:
+
+```
+direct answer:
+  The ReAct pattern combines reasoning and action, allowing large language
+  models to execute tasks using external tools. It enhances decision-making
+  and complex task handling. ...
+
+ranked results:
+  [0.86] ReAct vs Plan-and-Execute: A Practical Comparison of ...
+  [0.82] What is a ReAct agent? | IBM
+  [0.82] A simple Python implementation of the ReAct pattern for LLMs
+  (each with a ~300-char cleaned content snippet)
+
+total content: 3,191 chars — answer + snippets, no boilerplate
+```
+
+### Why this matters for agents
+
+Remember: everything a tool returns goes into the `messages` list and gets
+**resent to the model on every subsequent iteration**. That multiplies the
+difference:
+
+- **Token cost.** 13,564 chars vs. 3,191 chars is ~4x, *per iteration, per
+  search*. Two searches in a five-iteration run and the scraped version is
+  carrying tens of thousands of junk tokens.
+- **Reliability.** The model has to *find* the answer inside scraped
+  boilerplate — sometimes it latches onto a cookie banner instead. Tavily
+  returns ranked, pre-extracted content, so the observation is already an
+  answer, not a haystack.
+- **Fewer iterations.** With `include_answer=True` the agent often finishes
+  in one reason-act-observe cycle. Raw scraping tends to trigger follow-up
+  fetches ("that page didn't have it, try the next result").
+- **Brittleness.** Generic scraping breaks per-site (JS-rendered pages,
+  bot walls, paywalls). A search API absorbs that mess for you.
+
+"Agentic search" just means: search output shaped for a model to consume,
+not for a human to click through. To try it, get a free key at
+[tavily.com](https://tavily.com), add `TAVILY_API_KEY=tvly-...` to `.env`,
+and run `python search_comparison.py "your query"` (Part 1 works without
+any key; Part 2 skips itself politely if the key is missing).
+
 ## Why learn the raw loop before reaching for a framework?
 
 - **Debugging.** When an agent loops forever, ignores a tool, or "forgets"
@@ -162,7 +231,8 @@ multiple iterations.
 
 The `web_search` tool is a stub that returns canned text — it exercises the
 full loop without needing a search API key. Swapping in a real search API is
-a good first extension.
+a good first extension; see the raw vs. agentic search section above for
+why Tavily is the right shape of API to swap in.
 
 ## Ideas for extending it
 
