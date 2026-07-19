@@ -18,7 +18,6 @@ that observation on the next iteration and corrects itself.
 Run:  python agent_class.py "What is 1234 * 5678?"
 """
 
-import operator
 import sys
 from typing import Annotated, TypedDict
 
@@ -26,6 +25,7 @@ from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
 
 import tools as registry
 
@@ -40,15 +40,22 @@ SYSTEM_PROMPT = (
 
 
 class AgentState(TypedDict):
-    # `operator.add` makes this an append-only log: each node returns just its
-    # new messages and LangGraph concatenates them onto the existing state.
-    # (This is what MessagesState did for us in agent_langgraph.py.)
-    messages: Annotated[list[AnyMessage], operator.add]
+    # `add_messages` is the reducer: each node returns just its new messages
+    # and LangGraph merges them into the existing list. Unlike a plain
+    # `operator.add` (append-only), it matches on message id — a message
+    # carrying an existing id REPLACES that message, which is what lets a
+    # human edit a pending tool call via update_state (agent_human_in_loop.py).
+    messages: Annotated[list[AnyMessage], add_messages]
 
 
 class Agent:
     def __init__(
-        self, model, tool_schemas: list[dict], system: str = "", checkpointer=None
+        self,
+        model,
+        tool_schemas: list[dict],
+        system: str = "",
+        checkpointer=None,
+        interrupt_before: list[str] | None = None,
     ):
         self.system = system
         # Bind the same Anthropic-format schemas that tools.py already
@@ -66,7 +73,11 @@ class Agent:
         graph.set_entry_point("llm")
         # With a checkpointer, the graph saves its state (the message list)
         # after every node, keyed by thread_id — see agent_persistence.py.
-        self.graph = graph.compile(checkpointer=checkpointer)
+        # interrupt_before=["action"] pauses the run before executing tools,
+        # for human approval/editing — see agent_human_in_loop.py.
+        self.graph = graph.compile(
+            checkpointer=checkpointer, interrupt_before=interrupt_before
+        )
 
     def exists_action(self, state: AgentState) -> bool:
         """Did the model's last message request any tool calls?"""

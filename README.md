@@ -12,6 +12,7 @@ agent_raw.py        # the ReAct loop, hand-rolled: one while loop, no dependenci
 agent_langgraph.py  # the identical agent expressed as a LangGraph graph
 agent_class.py      # the LangGraph agent wrapped in a reusable class, with self-correction
 agent_persistence.py # thread-based conversation memory (checkpointer) + token streaming
+agent_human_in_loop.py # approval gates, editing pending actions, time travel
 search_comparison.py # raw web scraping vs. an agentic search API, side by side
 ```
 
@@ -182,6 +183,94 @@ and the user watches the answer being written (and sees tool calls happen
 mid-stream) instead of staring at a spinner. For anything user-facing,
 streaming is the difference between "feels broken" and "feels alive".
 
+## Human in the loop (`agent_human_in_loop.py`)
+
+An agent that can call tools can do damage: send the wrong email, delete the
+wrong rows, spend the wrong money. The checkpointer from the persistence
+section enables the fix — because state is snapshotted after every node, the
+graph can *stop* between "the model decided to act" and "the action ran",
+and a human can look before anything happens. Three escalating powers:
+
+**1. Approve.** Compile with `interrupt_before=["action"]` (an `Agent`
+constructor arg now) and every run pauses just before tool execution:
+
+```
+[llm] wants to run: calculator({'expression': '1234 * 5678'})
+[paused] get_state(thread).next = ('action',)
+[pending] calculator({'expression': '1234 * 5678'})
+
+[human] looks right — approving. resuming with stream(None, thread)
+[act]     calculator({'expression': '1234 * 5678'})
+[llm] 1234 × 5678 = 7,006,652
+```
+
+`get_state(thread).next` tells you where the graph is parked; streaming
+`None` (instead of a new message) means "carry on from the checkpoint".
+
+**2. Edit.** While paused, you can rewrite the pending action itself with
+`update_state()` — replace the tool-call message with one carrying the
+*same message id* but different args, and the `add_messages` reducer swaps
+it in place. The agent then executes the human's version:
+
+```
+[pending] calculator({'expression': '999 * 999'})
+[human] changing the expression to '111 * 111', then resuming
+[act]     calculator({'expression': '111 * 111'})
+[observe] 12321
+```
+
+The live run surfaced a nuance worth knowing: the model noticed that 12321
+doesn't answer the user's original 999×999 and said so in its reply. An
+edit is only as coherent as the history you leave behind — to fully
+redirect an agent, edit the user message too, not just the tool call.
+
+**3. Time travel.** `get_state_history(thread)` lists every checkpoint the
+thread ever passed through:
+
+```
+history: 5 checkpoints (newest first)
+  [0] next=(end)          messages=4
+  [1] next=('llm',)       messages=3
+  [2] next=('action',)    messages=2   <- the moment before the tool ran
+  [3] next=('llm',)       messages=1
+  [4] next=('__start__',) messages=0
+```
+
+Stream `None` with a *past* checkpoint's config and execution resumes from
+that point — as a **fork**, not a rerun. In the demo the history grows from
+5 to 8 checkpoints and one checkpoint ends up with two children: the
+original path and the replayed branch both exist. Combined with `update_state`,
+that's a debugging superpower: rewind to the step where an agent went wrong,
+fix the state, and replay — without re-running everything before it.
+
+### Why this matters in real applications
+
+- **Irreversible actions.** Anything that leaves the sandbox — emails,
+  payments, deletes, deploys — deserves a pause between decision and
+  execution. `interrupt_before` is that pause, built from checkpoints.
+- **Cost and safety gates.** Pause before expensive tools (big API calls,
+  long jobs) or risky ones, and approve/deny per call rather than trusting
+  the loop end to end.
+- **Debugging by rewinding.** Production agent did something weird on
+  iteration 7? Load its thread, walk the state history, replay from
+  iteration 6 with a fix. The alternative — rerun from scratch and hope —
+  is slower and non-deterministic.
+
+### The state mechanics underneath
+
+(The lesson this section follows also includes a standalone counter-graph
+exercise; the concept it teaches, minus the toy graph, is this paragraph.)
+A LangGraph state is just a typed dict flowing through nodes. Each field
+has a **reducer** that decides how a node's returned update merges into the
+existing value: no reducer = overwrite, `operator.add` = append,
+`add_messages` = append *unless the id matches an existing message, then
+replace*. Every time a node finishes, the checkpointer writes a snapshot —
+so a thread is really a chain of checkpoints, each knowing its parent.
+Everything in this section falls out of that one design: interrupts park
+the graph between checkpoints, `update_state` writes a new checkpoint with
+edited values, and time travel is just resuming from a non-tip checkpoint,
+which forks the chain like a git branch.
+
 ## Raw search vs. agentic search (`search_comparison.py`)
 
 The `web_search` tool in `tools.py` is a stub. What should the real thing
@@ -278,6 +367,7 @@ python agent_raw.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_langgraph.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_class.py "What is (17 + 3) ** 2 divided by 8?"
 python agent_persistence.py
+python agent_human_in_loop.py
 ```
 
 Both print their full trace (reasoning, tool calls, observations) so you can
