@@ -1,5 +1,87 @@
 # agent-from-scratch
 
+## Start here
+
+This repo is a progression. It begins with an LLM agent's core loop written
+completely by hand — raw API calls, a message list, a while loop — and builds
+one lesson at a time to a multi-node agent architecture with persistent
+memory, human oversight, and iterative self-critique. Every lesson was **run
+live against real APIs**: the traces quoted throughout this README are actual
+program output, not a tutorial followed along on faith.
+
+The six lessons, in order:
+
+1. **The ReAct loop, from scratch** (`agent_raw.py`) — reason → act → observe
+   in ~40 lines with no framework, plus the same agent rebuilt in LangGraph
+   (`agent_langgraph.py`) for an honest comparison.
+2. **A reusable Agent class** (`agent_class.py`) — the loop packaged the way
+   an application would embed it, with self-correction when the model
+   hallucinates a tool name.
+3. **Raw vs. agentic search** (`search_comparison.py`) — scraping a page
+   burns ~4x the tokens of a search API shaped for models; measured, not
+   asserted.
+4. **Persistence and streaming** (`agent_persistence.py`) — checkpointer-backed
+   memory per `thread_id` (same thread remembers, new thread doesn't) and
+   token-by-token streaming.
+5. **Human in the loop** (`agent_human_in_loop.py`) — pause before any tool
+   runs, edit the pending action, and time-travel: rewind to a past
+   checkpoint and fork from it.
+6. **The essay writer** (`agent_essay_writer.py`) — a different architecture
+   entirely: five specialized nodes (plan, research, generate, reflect,
+   re-research) in a bounded revision cycle.
+
+### Setup
+
+```bash
+pip install -r requirements.txt
+```
+
+Create a `.env` file in the repo root:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...   # required — every lesson calls Claude
+TAVILY_API_KEY=tvly-...        # lessons 3 and 6 only — free key at tavily.com;
+                               # both degrade gracefully if it's missing
+```
+
+## Why I built this
+
+I came to software engineering from the Navy, and I'm now making the next
+transition into AI engineering. I built this repo because I didn't want that
+transition to rest on framework incantations I couldn't explain. So instead
+of passively following a tutorial, I built each piece myself, ran it live,
+watched it fail, and kept the real traces — the goal being to understand what
+an agent actually *is* (a loop, a message list, a chain of checkpoints)
+before letting a framework do those things for me. If you're making a
+similar transition, the progression here is the one I wish I'd had.
+
+## The progression
+
+```
+ 1. agent_raw.py ────────────── the ReAct loop, written by hand
+         │                       (agent_langgraph.py: the same loop in LangGraph)
+         ▼
+ 2. agent_class.py ──────────── the loop becomes a reusable Agent class
+         │                       + self-correction on hallucinated tool names
+         ▼
+ 3. search_comparison.py ────── a detour that matters: what a real search
+         │                       tool should hand back to a model
+         ▼
+ 4. agent_persistence.py ────── + checkpointer: threads that remember,
+         │                       tokens that stream
+         ▼
+ 5. agent_human_in_loop.py ──── + interrupts: approve, edit, rewind, fork
+         │                       (possible only because of 4's checkpoints)
+         ▼
+ 6. agent_essay_writer.py ───── a new shape: five specialized nodes
+                                 in a bounded revision cycle
+```
+
+Lessons 2→5 each extend the same `Agent` class rather than starting over;
+lesson 6 deliberately breaks the pattern to show a second architecture.
+
+---
+
 A ReAct-style agent built twice: once in raw Python against the Anthropic API
 (no framework), and once with LangGraph. Same tools, same behavior — the point
 is to see exactly what a framework does for you by first doing it yourself.
